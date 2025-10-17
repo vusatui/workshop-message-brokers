@@ -13,7 +13,7 @@ vars:
 
 tasks:
   default:
-    tasks:
+    cmds:
       - task: cluster.start
       - task: deploy.headlamp-ingress
       - task: configure.ingress-dns
@@ -36,9 +36,13 @@ tasks:
       - echo '{{.WELCOME}}' 
       - minikube start --profile={{.PROFILE}} --cpus={{.CPU_COUNT | default "2"}} --memory='{{.MEMORY_SIZE | default "4g"}}'
       - >
-        minikube addons -p {{.PROFILE}} enable
-        headlamp metrics-server registry ingress
-        ingress-dns default-storageclass kubetail
+        minikube addons -p {{.PROFILE}} enable headlamp 
+        minikube addons -p {{.PROFILE}} enable metrics-server 
+        minikube addons -p {{.PROFILE}} enable registry 
+        minikube addons -p {{.PROFILE}} enable ingress
+        minikube addons -p {{.PROFILE}} enable ingress-dns 
+        minikube addons -p {{.PROFILE}} enable default-storageclass
+        minikube addons -p {{.PROFILE}} enable kubetail
       - kubectl create token headlamp --duration 24h -n headlamp
 
   configure.ingress-dns:
