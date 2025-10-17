@@ -1,0 +1,104 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  PROFILE: workshop-mb
+  REQ_MINIKUBE_VERSION: "1.35.0"
+  WELCOME: >
+    Welcome! Thank you for showing your interest to this workshop.
+    In order to run the playground, you need to have minikube and helm installed.
+  FAREWELL: >
+    Thank you for your time with us! We hope you found some useful tricks and tips for your tasks
+
+tasks:
+  default:
+    tasks:
+      - task: cluster.start
+      - task: deploy.headlamp-ingress
+      - task: configure.ingress-dns
+
+  cluster.start:
+    desc: Spin up a local cluster
+    vars:
+      CUR_MINIKUBE_VERSION: "$(minikube version --short | sed -e ''s/[v.]//g'')"
+      MIN_MINIKUBE_VERSION: "$(echo {{.REQ_MINIKUBE_VERSION}} | sed -e ''s/[v.]//g'')"
+    preconditions:
+      - test -x "$(command -v docker)" 
+      - test -x "$(command -v helm)"
+      - test -x "$(command -v minikube)"
+      - sh: '[ "{{.CUR_MINIKUBE_VERSION}}" -ge "{{.MIN_MINIKUBE_VERSION}}" ]'
+        msg: |
+          Minikube version is too old.
+          Please upgrade to version {{.REQ_MINIKUBE_VERSION}} or higher.
+
+    cmds:
+      - echo '{{.WELCOME}}' 
+      - minikube start --profile={{.PROFILE}} --cpus={{.CPU_COUNT | default "2"}} --memory='{{.MEMORY_SIZE | default "4g"}}'
+      - >
+        minikube addons -p {{.PROFILE}} enable
+        headlamp metrics-server registry ingress
+        ingress-dns default-storageclass kubetail
+      - kubectl create token headlamp --duration 24h -n headlamp
+
+  configure.ingress-dns:
+    desc: "Configure local DNS to resolve cluster hostnames. Sudo access is required."
+    cmds:
+      - |
+        DNS_IP=$(minikube ip -p {{.PROFILE}})
+        if [ -z "$DNS_IP" ]; then
+          echo "Could not get minikube IP for profile '{{.PROFILE}}'. Is the cluster running?"
+          exit 1
+        fi
+        echo "Minikube IP found: $DNS_IP"
+        
+        OS=$(uname -s)
+        if [ "$OS" = "Darwin" ]; then
+          echo "Detected macOS. Creating resolver file for .test domain..."
+          sudo mkdir -p /etc/resolver
+          # The EOF marker for a here-document must not be indented.
+          sudo tee /etc/resolver/minikube.test > /dev/null << EOF
+          domain test
+          nameserver $DNS_IP
+          search_order 1
+          timeout 5
+        EOF
+        elif [ "$OS" = "Linux" ]; then
+          echo "Detected Linux. Configuring systemd-resolved for .test domain..."
+          sudo mkdir -p /etc/systemd/resolved.conf.d
+          # The EOF marker for a here-document must not be indented.
+          sudo tee /etc/systemd/resolved.conf.d/minikube-test-domain.conf > /dev/null << EOF
+          [Resolve]
+          DNS=$DNS_IP
+          Domains=~test
+        EOF
+          sudo systemctl restart systemd-resolved
+          echo "systemd-resolved has been configured and restarted."
+        else
+          echo "Unsupported OS: $OS. Please configure DNS for *.test manually to point to $DNS_IP."
+          exit 1
+        fi
+
+        echo "Configuration complete. You should now be able to resolve services like http://my-service.test"
+
+  cluster.stop:
+    desc: Stop the local cluster
+    preconditions:
+      - test -x "$(command -v docker)" 
+      - test -x "$(command -v helm)"
+      - test -x "$(command -v minikube)"
+    
+    cmds:
+      - minikube stop --profile={{.PROFILE}}
+      - minikube delete --profile={{.PROFILE}}
+      - echo '{{.FAREWELL}}'
+
+  deploy.core-ingress-rules:
+    desc: "Deploy Ingress for basic services to make it accessible via dns names"
+    cmds:
+      - kubectl apply -f k8s/headlamp-ingress.yml
+
+  get.headlamp-token:
+    desc: Issue an access token for headlamp admin panel 
+    cmds:
+      - kubectl create token headlamp --duration 24h -n headlamp
