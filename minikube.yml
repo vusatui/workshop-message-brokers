@@ -5,6 +5,7 @@ version: '3'
 vars:
   PROFILE: workshop-mb
   REQ_MINIKUBE_VERSION: "1.35.0"
+  K8S_VERSION: "v1.34.0"
   WELCOME: >
     Welcome! Thank you for showing your interest to this workshop.
     In order to run the playground, you need to have minikube and helm installed.
@@ -13,18 +14,38 @@ vars:
 
 tasks:
   default:
-    tasks:
+    desc: Start cluster, expose Headlamp and configure DNS
+    cmds:
       - task: cluster.start
       - task: deploy.headlamp-ingress
       - task: configure.ingress-dns
+      - task: dns.show-hosts
+      - |
+        echo ""
+        echo "✅ All ready!"
+        echo "🌐 Open: http://headlamp.test/"
+        echo "If the browser doesn’t resolve, run:"
+        echo "   task configure.ingress-dns"
+        echo ""
+
+  cluster.recreate:
+    desc: Delete and create a fresh minikube profile to match current minikube images
+    cmds:
+      - minikube delete -p {{.PROFILE}} || true
+      - >
+        minikube start
+        --profile={{.PROFILE}}
+        --cpus={{.CPU_COUNT | default "2"}}
+        --memory='{{.MEMORY_SIZE | default "4g"}}'
+        --kubernetes-version={{.K8S_VERSION}}
 
   cluster.start:
     desc: Spin up a local cluster
     vars:
-      CUR_MINIKUBE_VERSION: "$(minikube version --short | sed -e ''s/[v.]//g'')"
-      MIN_MINIKUBE_VERSION: "$(echo {{.REQ_MINIKUBE_VERSION}} | sed -e ''s/[v.]//g'')"
+      CUR_MINIKUBE_VERSION: "$(minikube version --short | tr -d 'v.')"
+      MIN_MINIKUBE_VERSION: "$(echo {{.REQ_MINIKUBE_VERSION}} | tr -d 'v.')"
     preconditions:
-      - test -x "$(command -v docker)" 
+      - test -x "$(command -v docker)"
       - test -x "$(command -v helm)"
       - test -x "$(command -v minikube)"
       - sh: '[ "{{.CUR_MINIKUBE_VERSION}}" -ge "{{.MIN_MINIKUBE_VERSION}}" ]'
@@ -33,72 +54,176 @@ tasks:
           Please upgrade to version {{.REQ_MINIKUBE_VERSION}} or higher.
 
     cmds:
-      - echo '{{.WELCOME}}' 
-      - minikube start --profile={{.PROFILE}} --cpus={{.CPU_COUNT | default "2"}} --memory='{{.MEMORY_SIZE | default "4g"}}'
+      - echo '{{.WELCOME}}'
       - >
-        minikube addons -p {{.PROFILE}} enable
-        headlamp metrics-server registry ingress
-        ingress-dns default-storageclass kubetail
-      - kubectl create token headlamp --duration 24h -n headlamp
+        minikube start
+        --profile={{.PROFILE}}
+        --cpus={{.CPU_COUNT | default "2"}}
+        --memory='{{.MEMORY_SIZE | default "4g"}}'
+        --kubernetes-version={{.K8S_VERSION}}
+      - |
+        # Enable addons one-by-one (required by minikube).
+        # Важно: включаем ingress раньше headlamp, чтобы webhook уже был готов.
+        for a in ingress ingress-dns metrics-server registry default-storageclass headlamp kubetail; do
+          echo ">> Enabling addon: $a"
+          minikube addons enable "$a" -p {{.PROFILE}} || true
+        done
+      - |
+        echo ">> Current addons:"
+        minikube addons list -p {{.PROFILE}} || true
+      - |
+        echo ">> Waiting for headlamp resources..."
+        minikube kubectl -p {{.PROFILE}} -- wait --for=condition=Available deployment/headlamp -n headlamp --timeout=300s || true
+      - |
+        echo ">> Creating headlamp token for 24h..."
+        minikube kubectl -p {{.PROFILE}} -- create token headlamp -n headlamp --duration=24h || true
 
   configure.ingress-dns:
-    desc: "Configure local DNS to resolve cluster hostnames. Sudo access is required."
+    desc: "Configure local DNS for *.test with smart fallback; prefer localhost when tunnel is running."
     cmds:
       - |
-        DNS_IP=$(minikube ip -p {{.PROFILE}})
-        if [ -z "$DNS_IP" ]; then
-          echo "Could not get minikube IP for profile '{{.PROFILE}}'. Is the cluster running?"
-          exit 1
-        fi
-        echo "Minikube IP found: $DNS_IP"
-        
-        OS=$(uname -s)
-        if [ "$OS" = "Darwin" ]; then
-          echo "Detected macOS. Creating resolver file for .test domain..."
-          sudo mkdir -p /etc/resolver
-          # The EOF marker for a here-document must not be indented.
-          sudo tee /etc/resolver/minikube.test > /dev/null << EOF
-          domain test
-          nameserver $DNS_IP
-          search_order 1
-          timeout 5
-        EOF
-        elif [ "$OS" = "Linux" ]; then
-          echo "Detected Linux. Configuring systemd-resolved for .test domain..."
-          sudo mkdir -p /etc/systemd/resolved.conf.d
-          # The EOF marker for a here-document must not be indented.
-          sudo tee /etc/systemd/resolved.conf.d/minikube-test-domain.conf > /dev/null << EOF
-          [Resolve]
-          DNS=$DNS_IP
-          Domains=~test
-        EOF
-          sudo systemctl restart systemd-resolved
-          echo "systemd-resolved has been configured and restarted."
+        set -euo pipefail
+
+        PROFILE="{{.PROFILE}}"
+        OS="$(uname -s)"
+
+        # Соберём хосты из всех Ingress'ов (если нет — хотя бы headlamp.test)
+        HOSTS="$(minikube kubectl -p "$PROFILE" -- \
+          get ing --all-namespaces -o jsonpath='{range .items[*].spec.rules[*]}{.host}{"\n"}{end}' \
+          | grep -E '^[^.[:space:]]+\..+' | sort -u || true)"
+        [ -z "$HOSTS" ] && HOSTS="headlamp.test"
+
+        # Определим, запущен ли туннель (ищем процесс для профиля)
+        if pgrep -fl "minikube tunnel.*-p[ =]$PROFILE" >/dev/null 2>&1; then
+          TARGET_IP="127.0.0.1"
+          echo ">> Detected running minikube tunnel for profile '$PROFILE' -> using $TARGET_IP"
         else
-          echo "Unsupported OS: $OS. Please configure DNS for *.test manually to point to $DNS_IP."
+          TARGET_IP="$(minikube ip -p "$PROFILE")"
+          echo ">> No tunnel detected, using minikube IP: $TARGET_IP"
+        fi
+
+        if [ "$OS" = "Darwin" ]; then
+          sudo sed -i '' "/^# >>> minikube-${PROFILE}$/,/^# <<< minikube-${PROFILE}$/d" /etc/hosts || true
+          {
+            echo "# >>> minikube-${PROFILE}"
+            echo "$TARGET_IP  $HOSTS"
+            echo "# <<< minikube-${PROFILE}"
+          } | sudo tee -a /etc/hosts >/dev/null
+          sudo dscacheutil -flushcache || true
+          sudo killall -HUP mDNSResponder || true
+          echo "✅ /etc/hosts updated: $HOSTS -> $TARGET_IP"
+        elif [ "$OS" = "Linux" ]; then
+          sudo sed -i "/^# >>> minikube-${PROFILE}$/,/^# <<< minikube-${PROFILE}$/d" /etc/hosts || true
+          {
+            echo "# >>> minikube-${PROFILE}"
+            echo "$TARGET_IP  $HOSTS"
+            echo "# <<< minikube-${PROFILE}"
+          } | sudo tee -a /etc/hosts >/dev/null
+          echo "✅ /etc/hosts updated: $HOSTS -> $TARGET_IP"
+        else
+          echo "Unsupported OS: $OS"
           exit 1
         fi
 
-        echo "Configuration complete. You should now be able to resolve services like http://my-service.test"
+        echo ""
+        echo "Try:  http://headlamp.test/"
+
+  dns.cleanup-hosts:
+    desc: "Remove /etc/hosts block added by configure.ingress-dns"
+    cmds:
+      - |
+        PROFILE="{{.PROFILE}}"
+        OS="$(uname -s)"
+        if [ "$OS" = "Darwin" ]; then
+          sudo sed -i '' "/^# >>> minikube-${PROFILE}$/,/^# <<< minikube-${PROFILE}$/d" /etc/hosts
+        else
+          sudo sed -i "/^# >>> minikube-${PROFILE}$/,/^# <<< minikube-${PROFILE}$/d" /etc/hosts
+        fi
+        echo "Removed /etc/hosts block for profile ${PROFILE} (if present)."
+
+  dns.show-hosts:
+    desc: "Show current Ingress hosts (from the cluster)"
+    cmds:
+      - |
+        minikube kubectl -p {{.PROFILE}} -- \
+          get ing --all-namespaces -o jsonpath='{range .items[*].spec.rules[*]}{.host}{"\n"}{end}' \
+          | sort -u
 
   cluster.stop:
-    desc: Stop the local cluster
+    desc: Stop and delete the local cluster
     preconditions:
-      - test -x "$(command -v docker)" 
+      - test -x "$(command -v docker)"
       - test -x "$(command -v helm)"
       - test -x "$(command -v minikube)"
-    
     cmds:
-      - minikube stop --profile={{.PROFILE}}
-      - minikube delete --profile={{.PROFILE}}
+      - minikube stop --profile={{.PROFILE}} || true
+      - minikube delete --profile={{.PROFILE}} || true
       - echo '{{.FAREWELL}}'
 
-  deploy.core-ingress-rules:
-    desc: "Deploy Ingress for basic services to make it accessible via dns names"
+  # Matches "default" pipeline
+  deploy.headlamp-ingress:
+    desc: "Deploy Ingress for Headlamp dashboard (waits for nginx admission webhook)"
     cmds:
-      - kubectl apply -f k8s/headlamp-ingress.yml
+      - |
+        set -euo pipefail
+        echo ">> Waiting for ingress-nginx-controller to be Available..."
+        minikube kubectl -p {{.PROFILE}} -- rollout status deploy/ingress-nginx-controller -n ingress-nginx --timeout=180s
+
+        echo ">> Waiting for admission webhook endpoints..."
+        for i in $(seq 1 60); do
+          EP="$(minikube kubectl -p {{.PROFILE}} -- get endpoints -n ingress-nginx ingress-nginx-controller-admission -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+          if [ -n "$EP" ]; then
+            echo "   admission endpoint: $EP"
+            break
+          fi
+          echo "   retry $i/60: no endpoints yet..."
+          sleep 2
+        done
+
+        # финальная проверка: если по-прежнему пусто — мягкий рестарт контроллера и ещё один короткий wait
+        if [ -z "${EP:-}" ]; then
+          echo ">> Admission endpoints still empty, restarting controller..."
+          minikube kubectl -p {{.PROFILE}} -- rollout restart deploy/ingress-nginx-controller -n ingress-nginx
+          minikube kubectl -p {{.PROFILE}} -- rollout status deploy/ingress-nginx-controller -n ingress-nginx --timeout=180s
+          EP="$(minikube kubectl -p {{.PROFILE}} -- get endpoints -n ingress-nginx ingress-nginx-controller-admission -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+          if [ -z "$EP" ]; then
+            echo "!! admission webhook still not ready — aborting to avoid webhook errors"
+            exit 1
+          fi
+          echo "   admission endpoint (after restart): $EP"
+        fi
+
+        echo ">> Waiting for headlamp service endpoints..."
+        for i in $(seq 1 60); do
+          HEP="$(minikube kubectl -p {{.PROFILE}} -- get endpoints -n headlamp headlamp -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+          if [ -n "$HEP" ]; then
+            echo "   headlamp endpoint: $HEP"
+            break
+          fi
+          echo "   retry $i/60: headlamp service not ready..."
+          sleep 2
+        done
+
+        if [ -z "${HEP:-}" ]; then
+          echo "!! headlamp service endpoints not ready — aborting ingress apply"
+          exit 1
+        fi
+
+        echo ">> Applying headlamp ingress…"
+        minikube kubectl -p {{.PROFILE}} -- apply -f k8s/headlamp-ingress.yml
+
+        echo ">> Current ingress:"
+        minikube kubectl -p {{.PROFILE}} -- get ing -n headlamp headlamp-ingress -o wide
+
+        echo ""
+        echo "🌐 Try:  http://headlamp.test/   (DNS already handled by configure.ingress-dns)"
 
   get.headlamp-token:
-    desc: Issue an access token for headlamp admin panel 
+    desc: Issue an access token for headlamp admin panel
     cmds:
-      - kubectl create token headlamp --duration 24h -n headlamp
+      - minikube kubectl -p {{.PROFILE}} -- create token headlamp --duration 24h -n headlamp
+
+  tunnel.start:
+    desc: "Run 'minikube tunnel' in foreground (Ctrl+C to stop). Required for LoadBalancer or 127.0.0.1 access."
+    cmds:
+      - minikube tunnel -p {{.PROFILE}}
