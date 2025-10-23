@@ -15,7 +15,7 @@ tasks:
   default:
     cmds:
       - task: cluster.start
-      - task: deploy.headlamp-ingress
+      - task: deploy.core-ingress-rules
       - task: configure.ingress-dns
 
   cluster.start:
@@ -35,7 +35,7 @@ tasks:
     cmds:
       - echo '{{.WELCOME}}' 
       - minikube start --profile={{.PROFILE}} --cpus={{.CPU_COUNT | default "2"}} --memory='{{.MEMORY_SIZE | default "4g"}}'
-      - >
+      - |
         minikube addons -p {{.PROFILE}} enable headlamp 
         minikube addons -p {{.PROFILE}} enable metrics-server 
         minikube addons -p {{.PROFILE}} enable registry 
@@ -84,6 +84,11 @@ tasks:
         fi
 
         echo "Configuration complete. You should now be able to resolve services like http://my-service.test"
+
+  cluster.tunnel:
+    desc: Run minikube tunnel (requires sudo; blocks until interrupted)
+    cmds:
+      - sudo minikube tunnel -p {{.PROFILE}}
 
   cluster.stop:
     desc: Stop the local cluster
