@@ -104,8 +104,11 @@ tasks:
 
   deploy.core-ingress-rules:
     desc: "Deploy Ingress for basic services to make it accessible via dns names"
-    cmds:
-      - kubectl apply -f k8s/headlamp-ingress.yml
+    cmds: 
+      - |
+        for ingress in k8s/*-ingress.yml; do
+          kubectl apply -f "$ingress"
+        done
 
   get.headlamp-token:
     desc: Issue an access token for headlamp admin panel 

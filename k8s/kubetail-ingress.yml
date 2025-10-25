@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kubetail-dashboard-ingress
+  namespace: kubetail-system
+spec:
+  rules:
+  - host: kubetail.test
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kubetail-dashboard
+            port:
+              name: http
