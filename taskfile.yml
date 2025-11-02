@@ -123,18 +123,7 @@ tasks:
   delete.monitoring:
     desc: "Uninstall kube-prometheus-stack via Helm"
     cmds:
-      - helm uninstall monitoring -n monitoring || true
-      - task cleanup.monitoring-crds
-      - kubectl delete ns monitoring --ignore-not-found=true
-
-  get.grafana-password:
-    desc: "Show Grafana admin password"
-    cmds:
-      - kubectl get secret -n monitoring monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
-
-  cleanup.monitoring-crds:
-    desc: "Delete kube-prometheus-stack CRDs (per official docs)"
-    cmds:
+      - helm uninstall monitoring -n monitoring
       - kubectl delete crd alertmanagerconfigs.monitoring.coreos.com --ignore-not-found=true
       - kubectl delete crd alertmanagers.monitoring.coreos.com --ignore-not-found=true
       - kubectl delete crd podmonitors.monitoring.coreos.com --ignore-not-found=true
@@ -145,6 +134,7 @@ tasks:
       - kubectl delete crd scrapeconfigs.monitoring.coreos.com --ignore-not-found=true
       - kubectl delete crd servicemonitors.monitoring.coreos.com --ignore-not-found=true
       - kubectl delete crd thanosrulers.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete ns monitoring --ignore-not-found=true
 
   hosts.add-ingress:
     desc: "Add /etc/hosts entries for ingress: headlamp.test, grafana.test, alertmanager.test, prometheus.test"

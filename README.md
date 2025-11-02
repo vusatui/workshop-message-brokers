@@ -58,7 +58,7 @@ We follow the official `kube-prometheus-stack` chart documentation (see Artifact
    ```
 3. Open UIs:
    - Prometheus: http://prometheus.test
-   - Grafana: http://grafana.test (user: admin, password: `task get.grafana-password`)
+   - Grafana: http://grafana.test (user: admin, password: admin)
 
 4. Remove monitoring:
    ```bash
@@ -99,8 +99,6 @@ The block is wrapped between these markers, so it’s easy to update/remove:
 Uninstall the chart and remove CRDs as per the official chart docs (https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack):
 ```bash
 task delete.monitoring
-# or, just CRDs if needed
-task cleanup.monitoring-crds
 ```
 
 Note: Vendored chart files are not committed. The folder `k8s/monitoring/charts/` is ignored via `.gitignore`. Use the Helm repo with a pinned `--version`.
