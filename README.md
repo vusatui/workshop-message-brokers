@@ -18,26 +18,27 @@
   
 1. To start the cluster:
    ```bash
-    task --taskfile minikube.yml cluster.start
+    task cluster.start
    ```
 2. Configure the local DNS resolver to work with the cluster's ingress. This allows you to access services using `.test` domains (e.g., `http://my-app.test`).
    > **Note:** This command requires `sudo` privileges to modify system network settings.
     ```bash
-    task --taskfile minikube.yml configure.ingress-dns
+    task configure.ingress-dns
     ```
 
 3. Access the Headlamp UI:
    - Get your authentication token by running:
      ```bash
-     task --taskfile minikube.yml get.headlamp-token
+     task get.headlamp-token
      ```
    - Open your browser and navigate to **http://headlamp.test**
    - Paste the token into the login field to access the dashboard.
 
+> **Note:** If you are using minikube with the Docker driver on macOS, you need to run the command `task cluster.tunnel` to access the services in the container.
 
 ## Quickend
 
 1. To stop the cluster:
     ```bash
-    task --taskfile minikube.yml cluster.stop
+    task cluster.stop
     ``` 
