@@ -5,6 +5,7 @@ version: '3'
 vars:
   PROFILE: workshop-mb
   REQ_MINIKUBE_VERSION: "1.35.0"
+  KPS_VERSION: "79.1.0"
   WELCOME: >
     Welcome! Thank you for showing your interest to this workshop.
     In order to run the playground, you need to have minikube and helm installed.
@@ -111,3 +112,57 @@ tasks:
     desc: Issue an access token for headlamp admin panel 
     cmds:
       - kubectl create token headlamp --duration 24h -n headlamp
+
+  deploy.monitoring:
+    desc: "Install/upgrade kube-prometheus-stack via Helm (official)"
+    cmds:
+      - helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      - helm repo update
+      - helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace --values k8s/monitoring/values.yaml --version {{.KPS_VERSION}}
+
+  delete.monitoring:
+    desc: "Uninstall kube-prometheus-stack via Helm"
+    cmds:
+      - helm uninstall monitoring -n monitoring
+      - kubectl delete crd alertmanagerconfigs.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd alertmanagers.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd podmonitors.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd probes.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd prometheusagents.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd prometheuses.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd prometheusrules.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd scrapeconfigs.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd servicemonitors.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete crd thanosrulers.monitoring.coreos.com --ignore-not-found=true
+      - kubectl delete ns monitoring --ignore-not-found=true
+
+  hosts.add-ingress:
+    desc: "Add /etc/hosts entries for ingress: headlamp.test, grafana.test, alertmanager.test, prometheus.test"
+    cmds:
+      - |
+        OS=$(uname -s);
+        if [ "$OS" = "Darwin" ]; then SED_INPLACE="sed -i ''"; else SED_INPLACE="sed -i"; fi;
+        sudo sh -c "$SED_INPLACE -e '/^# >>> minikube-workshop-mb$/,/^# <<< minikube-workshop-mb$/d' /etc/hosts";
+        sudo tee -a /etc/hosts >/dev/null << 'EOF'
+        # >>> minikube-workshop-mb
+        127.0.0.1  headlamp.test
+        127.0.0.1  grafana.test
+        127.0.0.1  alertmanager.test
+        127.0.0.1  prometheus.test
+        # <<< minikube-workshop-mb
+        EOF
+
+  hosts.remove-ingress:
+    desc: "Remove /etc/hosts entries for workshop ingress block"
+    cmds:
+      - |
+        OS=$(uname -s);
+        if [ "$OS" = "Darwin" ]; then SED_INPLACE="sed -i ''"; else SED_INPLACE="sed -i"; fi;
+        sudo sh -c "$SED_INPLACE -e '/^# >>> minikube-workshop-mb$/,/^# <<< minikube-workshop-mb$/d' /etc/hosts"
+
+
+  status.monitoring:
+    desc: "Show status of monitoring namespace"
+    cmds:
+      - kubectl get pods -n monitoring -o wide
+      - kubectl get ingress -n monitoring

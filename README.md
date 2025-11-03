@@ -12,32 +12,153 @@
 2. Install [taskfile](https://taskfile.dev/docs/installation)
 3. Install [minikube](https://minikube.sigs.k8s.io/docs/start)
 4. Install [helm](https://helm.sh/docs/intro/install/)
+5. Install [Kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/)
 
 
 ## Quickstart
   
 1. To start the cluster:
    ```bash
-    task --taskfile minikube.yml cluster.start
+    task cluster.start
    ```
 2. Configure the local DNS resolver to work with the cluster's ingress. This allows you to access services using `.test` domains (e.g., `http://my-app.test`).
    > **Note:** This command requires `sudo` privileges to modify system network settings.
     ```bash
-    task --taskfile minikube.yml configure.ingress-dns
+    task configure.ingress-dns
     ```
 
 3. Access the Headlamp UI:
    - Get your authentication token by running:
      ```bash
-     task --taskfile minikube.yml get.headlamp-token
+     task get.headlamp-token
      ```
    - Open your browser and navigate to **http://headlamp.test**
    - Paste the token into the login field to access the dashboard.
 
+> **Note:** If you are using minikube with the Docker driver on macOS, you need to run the command `task cluster.tunnel` to access the services in the container.
 
 ## Quickend
 
 1. To stop the cluster:
     ```bash
-    task --taskfile minikube.yml cluster.stop
+    task cluster.stop
     ``` 
+
+## Monitoring (Helm, official chart)
+
+We follow the official `kube-prometheus-stack` chart documentation (see Artifact Hub: https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack).
+
+1. Deploy monitoring stack:
+   ```bash
+   task deploy.monitoring
+   ```
+2. Check status and ingress endpoints:
+   ```bash
+   task status.monitoring
+   ```
+3. Open UIs:
+   - Prometheus: http://prometheus.test
+   - Grafana: http://grafana.test (user: admin, password: admin)
+
+4. Remove monitoring:
+   ```bash
+   task delete.monitoring
+   ```
+
+> Note: On macOS with Docker driver use `task cluster.tunnel` to expose services.
+
+Troubleshooting:
+- If you previously installed monitoring via another method and see Helm ownership errors, run a clean uninstall and CRD cleanup, then install again:
+  ```bash
+  task delete.monitoring
+  task deploy.monitoring
+  ```
+
+### Hosts entries for ingress
+
+Add local DNS entries to `/etc/hosts` for ingress endpoints (requires sudo):
+```bash
+task hosts.add-ingress
+```
+Remove them:
+```bash
+task hosts.remove-ingress
+```
+The block is wrapped between these markers, so it’s easy to update/remove:
+```
+# >>> minikube-workshop-mb
+127.0.0.1  headlamp.test
+127.0.0.1  grafana.test
+127.0.0.1  alertmanager.test
+127.0.0.1  prometheus.test
+# <<< minikube-workshop-mb
+```
+
+### Cleanup (official)
+
+Uninstall the chart and remove CRDs as per the official chart docs (https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack):
+```bash
+task delete.monitoring
+```
+
+Note: Vendored chart files are not committed. The folder `k8s/monitoring/charts/` is ignored via `.gitignore`. Use the Helm repo with a pinned `--version`.
+
+### How usecases add monitoring
+
+Usecases are independent apps that expose metrics and provide their own `ServiceMonitor`/`PodMonitor` via Kustomize. Prometheus is configured to automatically discover monitors across all namespaces.
+
+Minimal example (inside a usecase repo folder):
+
+```yaml
+# usecases/<name>/k8s/base/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-app
+  namespace: my-ns
+  labels:
+    app: my-app
+spec:
+  selector:
+    app: my-app
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: 8080
+```
+
+```yaml
+# usecases/<name>/k8s/base/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: my-app
+  namespace: my-ns
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+```
+
+```yaml
+# usecases/<name>/k8s/base/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: my-ns
+resources:
+  - service.yaml
+  - servicemonitor.yaml
+  # + your Deployment/StatefulSet/etc.
+```
+
+Apply the usecase (after creating its namespace):
+```bash
+kubectl create ns my-ns --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -k usecases/<name>/k8s/base
+```
+
+Prometheus will discover the target automatically (thanks to open selectors in monitoring values).
