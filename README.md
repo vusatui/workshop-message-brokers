@@ -5,7 +5,6 @@
 ![Docker](https://img.shields.io/badge/docker-%232496ED.svg?style=flat&logo=docker&logoColor=white)
 ![minikube](https://img.shields.io/badge/minikube-%23316CE6.svg?style=flat&logo=kubernetes&logoColor=white)
 
-
 ## Prerequisites
 
 1. Instal [docker](https://docs.docker.com/engine/install/)
@@ -24,10 +23,15 @@
 2. Configure the local DNS resolver to work with the cluster's ingress. This allows you to access services using `.test` domains (e.g., `http://my-app.test`).
    > **Note:** This command requires `sudo` privileges to modify system network settings.
     ```bash
-    task configure.ingress-dns
+    task dns.add
     ```
 
-3. Access the Headlamp UI:
+3. Run the core services, ingress and monitoring which will be required throughout the course
+  ```bash
+  task deploy.core
+  ```
+
+4. Access the Headlamp UI:
    - Get your authentication token by running:
      ```bash
      task get.headlamp-token
@@ -48,50 +52,33 @@
 
 We follow the official `kube-prometheus-stack` chart documentation (see Artifact Hub: https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack).
 
-1. Deploy monitoring stack:
-   ```bash
-   task deploy.monitoring
-   ```
-2. Check status and ingress endpoints:
+1. Check status and ingress endpoints:
    ```bash
    task status.monitoring
    ```
-3. Open UIs:
+2. Open UIs:
    - Prometheus: http://prometheus.test
    - Grafana: http://grafana.test (user: admin, password: admin)
 
-4. Remove monitoring:
-   ```bash
-   task delete.monitoring
-   ```
 
 > Note: On macOS with Docker driver use `task cluster.tunnel` to expose services.
 
 Troubleshooting:
 - If you previously installed monitoring via another method and see Helm ownership errors, run a clean uninstall and CRD cleanup, then install again:
   ```bash
-  task delete.monitoring
-  task deploy.monitoring
+  task rollback.core
+  task deploy.core
   ```
 
 ### Hosts entries for ingress
 
 Add local DNS entries to `/etc/hosts` for ingress endpoints (requires sudo):
 ```bash
-task hosts.add-ingress
+task dns.add
 ```
 Remove them:
 ```bash
-task hosts.remove-ingress
-```
-The block is wrapped between these markers, so it’s easy to update/remove:
-```
-# >>> minikube-workshop-mb
-127.0.0.1  headlamp.test
-127.0.0.1  grafana.test
-127.0.0.1  alertmanager.test
-127.0.0.1  prometheus.test
-# <<< minikube-workshop-mb
+task dns.remove
 ```
 
 ### Cleanup (official)
