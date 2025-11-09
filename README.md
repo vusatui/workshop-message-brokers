@@ -5,9 +5,28 @@
 ![Docker](https://img.shields.io/badge/docker-%232496ED.svg?style=flat&logo=docker&logoColor=white)
 ![minikube](https://img.shields.io/badge/minikube-%23316CE6.svg?style=flat&logo=kubernetes&logoColor=white)
 
+This workshop explores the core challenges of reliable communication in distributed systems by focusing on messaging platform delivery semantics. We'll move beyond simple database-driven architectures to understand why and when a dedicated messaging system becomes essential for building scalable and resilient applications.
+
+Throughout this workshop, we are trying to answer the following questions:
+
+  * Why not just use a DB? 
+
+  * What if we just 'fire and forget'? 
+
+  * How do we guarantee it arrives?
+
+  * We solved reliability, but what other problem can appear?
+
+  * How do we make consumers 'safe' for duplicates?
+
+  * Can the system just handle this for me?
+
+By the end, you'll have a better understanding when and how start thinking about delivery guarantees for your specific needs.
+
+
 ## Prerequisites
 
-1. Instal [docker](https://docs.docker.com/engine/install/)
+1. Install [docker](https://docs.docker.com/engine/install/)
 2. Install [taskfile](https://taskfile.dev/docs/installation)
 3. Install [minikube](https://minikube.sigs.k8s.io/docs/start)
 4. Install [helm](https://helm.sh/docs/intro/install/)
