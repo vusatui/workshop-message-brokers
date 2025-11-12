@@ -12,12 +12,16 @@ vars:
   FAREWELL: >
     Thank you for your time with us! We hope you found some useful tricks and tips for your tasks
 
+includes:
+  core:
+    taskfile: ./k8s/taskfile.yml
+
 tasks:
   default:
     cmds:
       - task: cluster.start
       - task: dns.add
-      - task: deploy.core
+      - task: core:deploy
 
   cluster.start:
     desc: Spin up a local cluster
@@ -93,39 +97,3 @@ tasks:
       - |
         sudo sed -i.back -e '/^# >>> minikube-workshop-mb$/,/^# <<< minikube-workshop-mb$/d' /etc/hosts
         echo "/etc/hosts entries removed." 
-
-  deploy.core:
-    desc: "Deploy the core services, ingress rules and other k8s entities"
-    cmds:
-      - kubectl apply -f k8s/headlamp-ingress.yml -f k8s/kubetail-ingress.yml
-      - | # Install kube-prometheus-stack 
-        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-        helm repo update
-        helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace --values k8s/monitoring/values.yaml --version {{.KPS_VERSION}}
-
-  rollback.core:
-    desc: "Uninstall kube-prometheus-stack via Helm"
-    cmds:
-      - helm uninstall monitoring -n monitoring
-      - kubectl delete crd alertmanagerconfigs.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd alertmanagers.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd podmonitors.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd probes.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd prometheusagents.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd prometheuses.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd prometheusrules.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd scrapeconfigs.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd servicemonitors.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete crd thanosrulers.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete ns monitoring --ignore-not-found=true 
-
-  status.monitoring:
-    desc: "Show status of monitoring namespace"
-    cmds:
-      - kubectl get pods -n monitoring -o wide
-      - kubectl get ingress -n monitoring
-
-  get.headlamp-token:
-    desc: Issue an access token for headlamp admin panel 
-    cmds:
-      - kubectl create token headlamp --duration 24h -n headlamp
