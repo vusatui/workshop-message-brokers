@@ -16,7 +16,7 @@
 
 ## Quickstart
   
-1. To start the cluster:
+1. To manage the cluster:
    ```bash
     task cluster.start
    ```
@@ -28,13 +28,13 @@
 
 3. Run the core services, ingress and monitoring which will be required throughout the course
   ```bash
-  task deploy.core
+  task core:deploy
   ```
 
 4. Access the Headlamp UI:
    - Get your authentication token by running:
      ```bash
-     task get.headlamp-token
+     task core:headlamp.token
      ```
    - Open your browser and navigate to **http://headlamp.test**
    - Paste the token into the login field to access the dashboard.
@@ -54,7 +54,7 @@ We follow the official `kube-prometheus-stack` chart documentation (see Artifact
 
 1. Check status and ingress endpoints:
    ```bash
-   task status.monitoring
+   task core:monitoring.status
    ```
 2. Open UIs:
    - Prometheus: http://prometheus.test
@@ -66,8 +66,8 @@ We follow the official `kube-prometheus-stack` chart documentation (see Artifact
 Troubleshooting:
 - If you previously installed monitoring via another method and see Helm ownership errors, run a clean uninstall and CRD cleanup, then install again:
   ```bash
-  task rollback.core
-  task deploy.core
+  task core:rollback
+  task core:deploy
   ```
 
 ### Hosts entries for ingress
@@ -79,13 +79,6 @@ task dns.add
 Remove them:
 ```bash
 task dns.remove
-```
-
-### Cleanup (official)
-
-Uninstall the chart and remove CRDs as per the official chart docs (https://artifacthub.io/packages/helm/prometheus-community/kube-prometheus-stack):
-```bash
-task delete.monitoring
 ```
 
 Note: Vendored chart files are not committed. The folder `k8s/monitoring/charts/` is ignored via `.gitignore`. Use the Helm repo with a pinned `--version`.

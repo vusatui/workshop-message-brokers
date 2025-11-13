@@ -1,0 +1,42 @@
+# https://taskfile.dev
+
+version: '3'
+
+
+tasks:
+  deploy:
+    desc: "Deploy the core services, ingress rules and other k8s entities"
+    cmds:
+      - kubectl apply -f k8s/headlamp-ingress.yml -f k8s/kubetail-ingress.yml
+      - | # Install kube-prometheus-stack 
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo update
+        helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace --values k8s/monitoring/values.yaml --version {{.KPS_VERSION}}
+
+  rollback:
+    desc: "Uninstall kube-prometheus-stack via Helm"
+    cmds:
+      - | # Uninstall kube-prometheus-stack 
+        helm uninstall monitoring -n monitoring
+        kubectl delete crd alertmanagerconfigs.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd alertmanagers.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd podmonitors.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd probes.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd prometheusagents.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd prometheuses.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd prometheusrules.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd scrapeconfigs.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd servicemonitors.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete crd thanosrulers.monitoring.coreos.com --ignore-not-found=true
+        kubectl delete ns monitoring --ignore-not-found=true 
+
+  monitoring.status:
+    desc: "Show status of monitoring namespace"
+    cmds:
+      - kubectl get pods -n monitoring -o wide
+      - kubectl get ingress -n monitoring
+
+  headlamp.token:
+    desc: Issue an access token for headlamp admin panel 
+    cmds:
+      - kubectl create token headlamp --duration 24h -n headlamp
