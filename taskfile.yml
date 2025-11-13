@@ -16,8 +16,8 @@ tasks:
   default:
     cmds:
       - task: cluster.start
-      - task: deploy.core-ingress-rules
-      - task: configure.ingress-dns
+      - task: dns.add
+      - task: deploy.core
 
   cluster.start:
     desc: Spin up a local cluster
@@ -46,46 +46,6 @@ tasks:
         minikube addons -p {{.PROFILE}} enable kubetail
       - kubectl create token headlamp --duration 24h -n headlamp
 
-  configure.ingress-dns:
-    desc: "Configure local DNS to resolve cluster hostnames. Sudo access is required."
-    cmds:
-      - |
-        DNS_IP=$(minikube ip -p {{.PROFILE}})
-        if [ -z "$DNS_IP" ]; then
-          echo "Could not get minikube IP for profile '{{.PROFILE}}'. Is the cluster running?"
-          exit 1
-        fi
-        echo "Minikube IP found: $DNS_IP"
-        
-        OS=$(uname -s)
-        if [ "$OS" = "Darwin" ]; then
-          echo "Detected macOS. Creating resolver file for .test domain..."
-          sudo mkdir -p /etc/resolver
-          # The EOF marker for a here-document must not be indented.
-          sudo tee /etc/resolver/minikube.test > /dev/null << EOF
-          domain test
-          nameserver $DNS_IP
-          search_order 1
-          timeout 5
-        EOF
-        elif [ "$OS" = "Linux" ]; then
-          echo "Detected Linux. Configuring systemd-resolved for .test domain..."
-          sudo mkdir -p /etc/systemd/resolved.conf.d
-          # The EOF marker for a here-document must not be indented.
-          sudo tee /etc/systemd/resolved.conf.d/minikube-test-domain.conf > /dev/null << EOF
-          [Resolve]
-          DNS=$DNS_IP
-          Domains=~test
-        EOF
-          sudo systemctl restart systemd-resolved
-          echo "systemd-resolved has been configured and restarted."
-        else
-          echo "Unsupported OS: $OS. Please configure DNS for *.test manually to point to $DNS_IP."
-          exit 1
-        fi
-
-        echo "Configuration complete. You should now be able to resolve services like http://my-service.test"
-
   cluster.tunnel:
     desc: Run minikube tunnel (requires sudo; blocks until interrupted)
     cmds:
@@ -103,24 +63,47 @@ tasks:
       - minikube delete --profile={{.PROFILE}}
       - echo '{{.FAREWELL}}'
 
-  deploy.core-ingress-rules:
-    desc: "Deploy Ingress for basic services to make it accessible via dns names"
+  dns.add:
+    desc: "Configure local DNS to resolve cluster hostnames. Sudo access is required."
     cmds:
-      - kubectl apply -f k8s/headlamp-ingress.yml
+      - |
+        DNS_IP=$(minikube ip -p {{.PROFILE}})
+        if [ -z "$DNS_IP" ]; then
+          echo "Could not get minikube IP for profile '{{.PROFILE}}'. Is the cluster running?"
+          exit 1
+        fi
+        echo "Minikube IP found: $DNS_IP"
+        
+        sudo sed -i.back '/^# >>> minikube-workshop-mb$/,/^# <<< minikube-workshop-mb$/d' /etc/hosts;
+        sudo tee -a /etc/hosts >/dev/null << EOF
+        # >>> minikube-workshop-mb
+        $DNS_IP  headlamp.test
+        $DNS_IP  grafana.test
+        $DNS_IP  alertmanager.test
+        $DNS_IP  prometheus.test
+        $DNS_IP  kubetail.test
+        # <<< minikube-workshop-mb
+        EOF
 
-  get.headlamp-token:
-    desc: Issue an access token for headlamp admin panel 
+        echo "Configuration complete. You should now be able to resolve services like http://headlamp.test"
+
+  dns.remove:
+    desc: "Remove /etc/hosts entries for workshop ingress block"
     cmds:
-      - kubectl create token headlamp --duration 24h -n headlamp
+      - |
+        sudo sed -i.back -e '/^# >>> minikube-workshop-mb$/,/^# <<< minikube-workshop-mb$/d' /etc/hosts
+        echo "/etc/hosts entries removed." 
 
-  deploy.monitoring:
-    desc: "Install/upgrade kube-prometheus-stack via Helm (official)"
+  deploy.core:
+    desc: "Deploy the core services, ingress rules and other k8s entities"
     cmds:
-      - helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-      - helm repo update
-      - helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace --values k8s/monitoring/values.yaml --version {{.KPS_VERSION}}
+      - kubectl apply -f k8s/headlamp-ingress.yml -f k8s/kubetail-ingress.yml
+      - | # Install kube-prometheus-stack 
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo update
+        helm upgrade --install monitoring prometheus-community/kube-prometheus-stack --namespace monitoring --create-namespace --values k8s/monitoring/values.yaml --version {{.KPS_VERSION}}
 
-  delete.monitoring:
+  rollback.core:
     desc: "Uninstall kube-prometheus-stack via Helm"
     cmds:
       - helm uninstall monitoring -n monitoring
@@ -134,35 +117,15 @@ tasks:
       - kubectl delete crd scrapeconfigs.monitoring.coreos.com --ignore-not-found=true
       - kubectl delete crd servicemonitors.monitoring.coreos.com --ignore-not-found=true
       - kubectl delete crd thanosrulers.monitoring.coreos.com --ignore-not-found=true
-      - kubectl delete ns monitoring --ignore-not-found=true
-
-  hosts.add-ingress:
-    desc: "Add /etc/hosts entries for ingress: headlamp.test, grafana.test, alertmanager.test, prometheus.test"
-    cmds:
-      - |
-        OS=$(uname -s);
-        if [ "$OS" = "Darwin" ]; then SED_INPLACE="sed -i ''"; else SED_INPLACE="sed -i"; fi;
-        sudo sh -c "$SED_INPLACE -e '/^# >>> minikube-workshop-mb$/,/^# <<< minikube-workshop-mb$/d' /etc/hosts";
-        sudo tee -a /etc/hosts >/dev/null << 'EOF'
-        # >>> minikube-workshop-mb
-        127.0.0.1  headlamp.test
-        127.0.0.1  grafana.test
-        127.0.0.1  alertmanager.test
-        127.0.0.1  prometheus.test
-        # <<< minikube-workshop-mb
-        EOF
-
-  hosts.remove-ingress:
-    desc: "Remove /etc/hosts entries for workshop ingress block"
-    cmds:
-      - |
-        OS=$(uname -s);
-        if [ "$OS" = "Darwin" ]; then SED_INPLACE="sed -i ''"; else SED_INPLACE="sed -i"; fi;
-        sudo sh -c "$SED_INPLACE -e '/^# >>> minikube-workshop-mb$/,/^# <<< minikube-workshop-mb$/d' /etc/hosts"
-
+      - kubectl delete ns monitoring --ignore-not-found=true 
 
   status.monitoring:
     desc: "Show status of monitoring namespace"
     cmds:
       - kubectl get pods -n monitoring -o wide
       - kubectl get ingress -n monitoring
+
+  get.headlamp-token:
+    desc: Issue an access token for headlamp admin panel 
+    cmds:
+      - kubectl create token headlamp --duration 24h -n headlamp
